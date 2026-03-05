@@ -19,7 +19,6 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.MediaStore
-import android.widget.Toast
 import androidx.core.app.NotificationCompat
 
 class ScreenCaptureService : Service() {
@@ -28,36 +27,30 @@ class ScreenCaptureService : Service() {
     private var virtualDisplay: VirtualDisplay? = null
     private var mediaRecorder: MediaRecorder? = null
     private var videoUri: Uri? = null
+    private var isRecording = false
 
     companion object {
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
         const val EXTRA_RESULT_CODE = "EXTRA_RESULT_CODE"
         const val EXTRA_RESULT_DATA = "EXTRA_RESULT_DATA"
-    }
-
-    private fun showToast(message: String) {
-        Handler(Looper.getMainLooper()).post {
-            Toast.makeText(applicationContext, message, Toast.LENGTH_LONG).show()
-        }
+        
+        const val EXTRA_WIDTH = "EXTRA_WIDTH"
+        const val EXTRA_HEIGHT = "EXTRA_HEIGHT"
+        const val EXTRA_DPI = "EXTRA_DPI"
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> {
-                try {
-                    startRecording(intent)
-                } catch (e: Exception) {
-                    showToast("Service Crash: ${e.message}")
-                    stopRecording()
-                }
-            }
+            ACTION_START -> startRecording(intent)
             ACTION_STOP -> stopRecording()
         }
         return START_NOT_STICKY
     }
 
     private fun startRecording(intent: Intent) {
+        if (isRecording) return
+        
         createNotificationChannel()
         val notification = NotificationCompat.Builder(this, "ScreenRecorderChannel")
             .setContentTitle("Screen Recorder")
@@ -67,12 +60,17 @@ class ScreenCaptureService : Service() {
             .build()
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+            startForeground(
+                1, 
+                notification, 
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+            )
         } else {
             startForeground(1, notification)
         }
 
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
+        
         val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
         } else {
@@ -80,8 +78,11 @@ class ScreenCaptureService : Service() {
             intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
         }
 
+        val width = intent.getIntExtra(EXTRA_WIDTH, 720)
+        val height = intent.getIntExtra(EXTRA_HEIGHT, 1280)
+        val dpi = intent.getIntExtra(EXTRA_DPI, 320)
+
         if (resultData == null) {
-            showToast("Intent data is missing")
             stopSelf()
             return
         }
@@ -89,10 +90,15 @@ class ScreenCaptureService : Service() {
         val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
 
-        // FORCE SAFE RESOLUTION (720x1280) to prevent encoder crashes
-        val width = 720
-        val height = 1280
-        val dpi = resources.displayMetrics.densityDpi
+        // FIX: Android 14 Requires a callback to be registered BEFORE creating the Virtual Display
+        val callback = object : MediaProjection.Callback() {
+            override fun onStop() {
+                super.onStop()
+                stopRecording() // Handle the user clicking "Stop sharing" from the system UI
+            }
+        }
+        val handler = Handler(Looper.getMainLooper())
+        mediaProjection?.registerCallback(callback, handler)
 
         setupMediaRecorder(width, height)
 
@@ -104,7 +110,7 @@ class ScreenCaptureService : Service() {
         )
 
         mediaRecorder?.start()
-        showToast("Recording properly initialized!")
+        isRecording = true
     }
 
     private fun setupMediaRecorder(width: Int, height: Int) {
@@ -119,10 +125,7 @@ class ScreenCaptureService : Service() {
         val resolver = contentResolver
         videoUri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, contentValues)
         
-        if (videoUri == null) throw Exception("Could not access MediaStore")
-
-        val fileDescriptor = resolver.openFileDescriptor(videoUri!!, "rw")?.fileDescriptor
-            ?: throw Exception("Could not open file descriptor")
+        val fileDescriptor = videoUri?.let { resolver.openFileDescriptor(it, "rw")?.fileDescriptor }
 
         mediaRecorder = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             MediaRecorder(this)
@@ -144,11 +147,23 @@ class ScreenCaptureService : Service() {
     }
 
     private fun stopRecording() {
-        try { mediaRecorder?.stop() } catch (e: Exception) {}
-        try { mediaRecorder?.reset() } catch (e: Exception) {}
-        try { mediaRecorder?.release() } catch (e: Exception) {}
-        try { virtualDisplay?.release() } catch (e: Exception) {}
-        try { mediaProjection?.stop() } catch (e: Exception) {}
+        if (!isRecording) return
+        isRecording = false
+
+        try {
+            mediaRecorder?.stop()
+        } catch (e: RuntimeException) {
+            // Ignore if called immediately after start
+        }
+        mediaRecorder?.reset()
+        mediaRecorder?.release()
+        mediaRecorder = null
+        
+        virtualDisplay?.release()
+        virtualDisplay = null
+        
+        mediaProjection?.stop()
+        mediaProjection = null
         
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
