@@ -19,7 +19,7 @@ android {
         compose = true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.8" // FIXED: Matches Kotlin 1.9.22
+        kotlinCompilerExtensionVersion = "1.5.8"
     }
 }
 
