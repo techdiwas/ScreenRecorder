@@ -8,7 +8,8 @@ import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
-import android.widget.Toast
+import android.util.DisplayMetrics
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,40 +29,47 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import android.util.DisplayMetrics
-import android.view.WindowManager
 
 class MainActivity : ComponentActivity() {
 
     private var isRecording by mutableStateOf(false)
 
-        private val screenCaptureLauncher = registerForActivityResult(
+    private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             
-            // FIX: Get the REAL screen metrics (including status bar/nav bar)
+            // FIX: Get REAL full screen dimensions (including status/nav bars)
             val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            val metrics = DisplayMetrics()
+            var screenWidth = 0
+            var screenHeight = 0
+            val density = resources.configuration.densityDpi
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                display?.getRealMetrics(metrics)
+                val windowMetrics = windowManager.currentWindowMetrics
+                val bounds = windowMetrics.bounds
+                screenWidth = bounds.width()
+                screenHeight = bounds.height()
             } else {
+                val metrics = DisplayMetrics()
                 @Suppress("DEPRECATION")
                 windowManager.defaultDisplay.getRealMetrics(metrics)
+                screenWidth = metrics.widthPixels
+                screenHeight = metrics.heightPixels
             }
-            
-            // Video encoders often crash if dimensions aren't even numbers. 
-            // We round down to the nearest multiple of 2.
-            val width = metrics.widthPixels and  shl(1).inv() // rounds to even
-            val height = metrics.heightPixels and shl(1).inv() // rounds to even
 
+            // FIX: Hardware Encoders often crash if width/height are odd numbers.
+            // Force them to be even numbers (multiples of 2).
+            screenWidth -= (screenWidth % 2)
+            screenHeight -= (screenHeight % 2)
+            
             val intent = Intent(this, ScreenCaptureService::class.java).apply {
                 action = ScreenCaptureService.ACTION_START
                 putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
                 putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, result.data)
-                putExtra(ScreenCaptureService.EXTRA_WIDTH, width)
-                putExtra(ScreenCaptureService.EXTRA_HEIGHT, height)
-                putExtra(ScreenCaptureService.EXTRA_DPI, metrics.densityDpi)
+                putExtra(ScreenCaptureService.EXTRA_WIDTH, screenWidth)
+                putExtra(ScreenCaptureService.EXTRA_HEIGHT, screenHeight)
+                putExtra(ScreenCaptureService.EXTRA_DPI, density)
             }
             
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -70,6 +78,14 @@ class MainActivity : ComponentActivity() {
                 startService(intent)
             }
             isRecording = true
+        }
+    }
+
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            startScreenCaptureIntent()
         }
     }
 
@@ -83,10 +99,7 @@ class MainActivity : ComponentActivity() {
                 ) {
                     ScreenRecorderUI(
                         isRecording = isRecording,
-                        onStartClick = { 
-                            Toast.makeText(this, "Step 1: Button Clicked", Toast.LENGTH_SHORT).show()
-                            checkPermissionsAndStart() 
-                        },
+                        onStartClick = { checkPermissionsAndStart() },
                         onStopClick = { stopScreenCapture() }
                     )
                 }
@@ -96,10 +109,9 @@ class MainActivity : ComponentActivity() {
 
     private fun checkPermissionsAndStart() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
-                startScreenCaptureIntent()
-            } else {
-                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            when (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)) {
+                PackageManager.PERMISSION_GRANTED -> startScreenCaptureIntent()
+                else -> permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         } else {
             startScreenCaptureIntent()
@@ -107,14 +119,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startScreenCaptureIntent() {
-        try {
-            Toast.makeText(this, "Step 2: Requesting Screen Capture...", Toast.LENGTH_SHORT).show()
-            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            val intent = projectionManager.createScreenCaptureIntent()
-            screenCaptureLauncher.launch(intent)
-        } catch (e: Exception) {
-            Toast.makeText(this, "Error launching capture prompt: ${e.message}", Toast.LENGTH_LONG).show()
-        }
+        val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        screenCaptureLauncher.launch(projectionManager.createScreenCaptureIntent())
     }
 
     private fun stopScreenCapture() {
@@ -123,11 +129,9 @@ class MainActivity : ComponentActivity() {
         }
         startService(intent)
         isRecording = false
-        Toast.makeText(this, "Recording Stopped", Toast.LENGTH_SHORT).show()
     }
 }
 
-// ... [Keep the exact same ScreenRecorderUI Composable code here] ...
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScreenRecorderUI(
@@ -168,6 +172,7 @@ fun ScreenRecorderUI(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(24.dp)
                 ) {
+                    
                     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
                     val scale by infiniteTransition.animateFloat(
                         initialValue = 1f,
