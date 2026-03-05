@@ -17,6 +17,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.IBinder
+import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -27,6 +28,9 @@ class ScreenCaptureService : Service() {
     private var virtualDisplay: VirtualDisplay? = null
     private var mediaRecorder: MediaRecorder? = null
     private var videoUri: Uri? = null
+    
+    // FIX: Keep a reference to the file descriptor so the system doesn't close it prematurely (0B bug)
+    private var parcelFileDescriptor: ParcelFileDescriptor? = null
 
     companion object {
         const val ACTION_START = "ACTION_START"
@@ -39,6 +43,7 @@ class ScreenCaptureService : Service() {
         const val EXTRA_DPI = "EXTRA_DPI"
         
         private const val TAG = "ScreenCaptureService"
+        const val ACTION_RECORDING_STOPPED = "com.example.screenrecorder.RECORDING_STOPPED"
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -52,15 +57,11 @@ class ScreenCaptureService : Service() {
     private fun startRecording(intent: Intent) {
         createNotificationChannel()
 
-        // Create a PendingIntent for the Stop action in the notification
         val stopIntent = Intent(this, ScreenCaptureService::class.java).apply {
             action = ACTION_STOP
         }
         val stopPendingIntent = PendingIntent.getService(
-            this,
-            0,
-            stopIntent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            this, 0, stopIntent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
         val notification = NotificationCompat.Builder(this, "ScreenRecorderChannel")
@@ -68,22 +69,16 @@ class ScreenCaptureService : Service() {
             .setContentText("Recording in progress...")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
-            // ADDED: The stop button on the notification
             .addAction(android.R.drawable.ic_media_pause, "Stop Recording", stopPendingIntent)
             .build()
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                1, 
-                notification, 
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            )
+            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         } else {
             startForeground(1, notification)
         }
 
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
-        
         val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
         } else {
@@ -128,13 +123,17 @@ class ScreenCaptureService : Service() {
             put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/ScreenRecorder")
+                // Tell system the file is currently being written to
+                put(MediaStore.Video.Media.IS_PENDING, 1)
             }
         }
 
         val resolver = contentResolver
         videoUri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, contentValues)
         
-        val fileDescriptor = videoUri?.let { resolver.openFileDescriptor(it, "rw")?.fileDescriptor }
+        // FIX: Assign to class-level variable so it stays open during recording
+        parcelFileDescriptor = videoUri?.let { resolver.openFileDescriptor(it, "rw") }
+        val fileDescriptor = parcelFileDescriptor?.fileDescriptor
 
         mediaRecorder = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             MediaRecorder(this)
@@ -166,11 +165,29 @@ class ScreenCaptureService : Service() {
             virtualDisplay?.release()
             mediaProjection?.stop()
             
+            // FIX: Close the file descriptor properly to flush the video data to disk
+            try {
+                parcelFileDescriptor?.close()
+                parcelFileDescriptor = null
+            } catch (e: Exception) {
+                Log.e(TAG, "Error closing file descriptor", e)
+            }
+
+            // Tell system the file is done writing so it shows up in Gallery instantly
+            videoUri?.let {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val contentValues = ContentValues().apply {
+                        put(MediaStore.Video.Media.IS_PENDING, 0)
+                    }
+                    contentResolver.update(it, contentValues, null, null)
+                }
+            }
+
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             
-            // Optional: Send a broadcast to MainActivity to update UI if it's open
-            sendBroadcast(Intent("com.example.screenrecorder.RECORDING_STOPPED"))
+            // Tell MainActivity to update its UI
+            sendBroadcast(Intent(ACTION_RECORDING_STOPPED))
         }
     }
 
