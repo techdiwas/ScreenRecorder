@@ -2,6 +2,7 @@ package com.example.screenrecorder
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.ContentValues
 import android.content.Context
@@ -52,11 +53,25 @@ class ScreenCaptureService : Service() {
         if (isRecording) return
         
         createNotificationChannel()
+
+        // FIX: Create a PendingIntent to stop the recording from the notification
+        val stopIntent = Intent(this, ScreenCaptureService::class.java).apply {
+            action = ACTION_STOP
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this, 
+            0, 
+            stopIntent, 
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        // FIX: Added custom icon and the stop action
         val notification = NotificationCompat.Builder(this, "ScreenRecorderChannel")
             .setContentTitle("Screen Recorder")
-            .setContentText("Recording screen...")
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentText("Recording your screen...")
+            .setSmallIcon(R.drawable.ic_stat_record) 
             .setOngoing(true)
+            .addAction(android.R.drawable.ic_media_pause, "Stop Recording", stopPendingIntent)
             .build()
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -90,11 +105,10 @@ class ScreenCaptureService : Service() {
         val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
 
-        // FIX: Android 14 Requires a callback to be registered BEFORE creating the Virtual Display
         val callback = object : MediaProjection.Callback() {
             override fun onStop() {
                 super.onStop()
-                stopRecording() // Handle the user clicking "Stop sharing" from the system UI
+                stopRecording() 
             }
         }
         val handler = Handler(Looper.getMainLooper())
@@ -167,6 +181,10 @@ class ScreenCaptureService : Service() {
         
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+
+        // Send a broadcast so MainActivity can update its UI if open
+        val stopIntent = Intent("ACTION_RECORDING_STOPPED")
+        sendBroadcast(stopIntent)
     }
 
     private fun createNotificationChannel() {
