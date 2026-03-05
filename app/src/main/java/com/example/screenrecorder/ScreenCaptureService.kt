@@ -54,7 +54,6 @@ class ScreenCaptureService : Service() {
         
         createNotificationChannel()
 
-        // FIX: Create a PendingIntent to stop the recording from the notification
         val stopIntent = Intent(this, ScreenCaptureService::class.java).apply {
             action = ACTION_STOP
         }
@@ -65,7 +64,6 @@ class ScreenCaptureService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
 
-        // FIX: Added custom icon and the stop action
         val notification = NotificationCompat.Builder(this, "ScreenRecorderChannel")
             .setContentTitle("Screen Recorder")
             .setContentText("Recording your screen...")
@@ -182,7 +180,6 @@ class ScreenCaptureService : Service() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
 
-        // Send a broadcast so MainActivity can update its UI if open
         val stopIntent = Intent("ACTION_RECORDING_STOPPED")
         sendBroadcast(stopIntent)
     }
