@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.IBinder
 import android.provider.MediaStore
+import android.util.Log
 import androidx.core.app.NotificationCompat
 
 class ScreenCaptureService : Service() {
@@ -35,6 +36,8 @@ class ScreenCaptureService : Service() {
         const val EXTRA_WIDTH = "EXTRA_WIDTH"
         const val EXTRA_HEIGHT = "EXTRA_HEIGHT"
         const val EXTRA_DPI = "EXTRA_DPI"
+        
+        private const val TAG = "ScreenCaptureService"
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -66,7 +69,6 @@ class ScreenCaptureService : Service() {
 
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
         
-        // FIX 1: Modern type-safe getParcelableExtra for Android 13+
         val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
         } else {
@@ -74,8 +76,11 @@ class ScreenCaptureService : Service() {
             intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
         }
 
-        val width = intent.getIntExtra(EXTRA_WIDTH, 720)
-        val height = intent.getIntExtra(EXTRA_HEIGHT, 1280)
+        // Ensure width and height are even numbers (multiples of 2) to prevent MediaRecorder crash
+        val rawWidth = intent.getIntExtra(EXTRA_WIDTH, 720)
+        val rawHeight = intent.getIntExtra(EXTRA_HEIGHT, 1280)
+        val width = if (rawWidth % 2 != 0) rawWidth - 1 else rawWidth
+        val height = if (rawHeight % 2 != 0) rawHeight - 1 else rawHeight
         val dpi = intent.getIntExtra(EXTRA_DPI, 320)
 
         if (resultData == null) {
@@ -83,19 +88,24 @@ class ScreenCaptureService : Service() {
             return
         }
 
-        val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
+        try {
+            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
 
-        setupMediaRecorder(width, height)
+            setupMediaRecorder(width, height)
 
-        virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "ScreenCapture",
-            width, height, dpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            mediaRecorder?.surface, null, null
-        )
+            virtualDisplay = mediaProjection?.createVirtualDisplay(
+                "ScreenCapture",
+                width, height, dpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                mediaRecorder?.surface, null, null
+            )
 
-        mediaRecorder?.start()
+            mediaRecorder?.start()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting screen recording: ${e.message}", e)
+            stopRecording() // Clean up safely instead of crashing
+        }
     }
 
     private fun setupMediaRecorder(width: Int, height: Int) {
@@ -112,7 +122,6 @@ class ScreenCaptureService : Service() {
         
         val fileDescriptor = videoUri?.let { resolver.openFileDescriptor(it, "rw")?.fileDescriptor }
 
-        // FIX 2: Modern MediaRecorder initialization using Context for Android 12+
         mediaRecorder = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             MediaRecorder(this)
         } else {
@@ -135,16 +144,17 @@ class ScreenCaptureService : Service() {
     private fun stopRecording() {
         try {
             mediaRecorder?.stop()
-        } catch (e: RuntimeException) {
-            // Ignore if called immediately after start
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping recorder", e)
+        } finally {
+            mediaRecorder?.reset()
+            mediaRecorder?.release()
+            virtualDisplay?.release()
+            mediaProjection?.stop()
+            
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
         }
-        mediaRecorder?.reset()
-        mediaRecorder?.release()
-        virtualDisplay?.release()
-        mediaProjection?.stop()
-        
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
     }
 
     private fun createNotificationChannel() {
