@@ -144,7 +144,7 @@ class MainActivity : ComponentActivity() {
             metrics.widthPixels to metrics.heightPixels
         }
 
-        // Hardware encoders crash if width/height are odd numbers.
+        // Many H.264 hardware encoders require even frame dimensions due to macroblock alignment.
         return (width - (width % 2)) to (height - (height % 2))
     }
 }
