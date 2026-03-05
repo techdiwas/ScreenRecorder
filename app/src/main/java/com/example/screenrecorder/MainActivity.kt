@@ -40,28 +40,9 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            
             val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            var screenWidth = 0
-            var screenHeight = 0
+            val (screenWidth, screenHeight) = getEvenScreenDimensions(windowManager)
             val density = resources.configuration.densityDpi
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                val windowMetrics = windowManager.currentWindowMetrics
-                val bounds = windowMetrics.bounds
-                screenWidth = bounds.width()
-                screenHeight = bounds.height()
-            } else {
-                val metrics = DisplayMetrics()
-                @Suppress("DEPRECATION")
-                windowManager.defaultDisplay.getRealMetrics(metrics)
-                screenWidth = metrics.widthPixels
-                screenHeight = metrics.heightPixels
-            }
-
-            // Hardware Encoders crash if width/height are odd numbers
-            screenWidth -= (screenWidth % 2)
-            screenHeight -= (screenHeight % 2)
             
             val intent = Intent(this, ScreenCaptureService::class.java).apply {
                 action = ScreenCaptureService.ACTION_START
@@ -151,6 +132,21 @@ class MainActivity : ComponentActivity() {
         startService(intent)
         isRecording = false
     }
+
+    private fun getEvenScreenDimensions(windowManager: WindowManager): Pair<Int, Int> {
+        val (width, height) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = windowManager.currentWindowMetrics.bounds
+            bounds.width() to bounds.height()
+        } else {
+            val metrics = DisplayMetrics()
+            @Suppress("DEPRECATION")
+            windowManager.defaultDisplay.getRealMetrics(metrics)
+            metrics.widthPixels to metrics.heightPixels
+        }
+
+        // Many H.264 hardware encoders require even frame dimensions due to macroblock alignment.
+        return (width - (width % 2)) to (height - (height % 2))
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -194,16 +190,21 @@ fun ScreenRecorderUI(
                     verticalArrangement = Arrangement.spacedBy(24.dp)
                 ) {
                     
-                    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-                    val scale by infiniteTransition.animateFloat(
-                        initialValue = 1f,
-                        targetValue = if (isRecording) 1.2f else 1f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(800, easing = FastOutSlowInEasing),
-                            repeatMode = RepeatMode.Reverse
-                        ),
-                        label = "scale"
-                    )
+                    val scale = if (isRecording) {
+                        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                        val animatedScale by infiniteTransition.animateFloat(
+                            initialValue = 1f,
+                            targetValue = 1.2f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(800, easing = FastOutSlowInEasing),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "scale"
+                        )
+                        animatedScale
+                    } else {
+                        1f
+                    }
 
                     Box(
                         modifier = Modifier
