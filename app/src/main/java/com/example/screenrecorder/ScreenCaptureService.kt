@@ -65,13 +65,26 @@ class ScreenCaptureService : Service() {
         }
 
         val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
-        val resultData = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
+        
+        // FIX 1: Modern type-safe getParcelableExtra for Android 13+
+        val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
+        }
+
         val width = intent.getIntExtra(EXTRA_WIDTH, 720)
         val height = intent.getIntExtra(EXTRA_HEIGHT, 1280)
         val dpi = intent.getIntExtra(EXTRA_DPI, 320)
 
+        if (resultData == null) {
+            stopSelf()
+            return
+        }
+
         val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        mediaProjection = projectionManager.getMediaProjection(resultCode, resultData!!)
+        mediaProjection = projectionManager.getMediaProjection(resultCode, resultData)
 
         setupMediaRecorder(width, height)
 
@@ -99,7 +112,13 @@ class ScreenCaptureService : Service() {
         
         val fileDescriptor = videoUri?.let { resolver.openFileDescriptor(it, "rw")?.fileDescriptor }
 
-        mediaRecorder = MediaRecorder().apply {
+        // FIX 2: Modern MediaRecorder initialization using Context for Android 12+
+        mediaRecorder = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            MediaRecorder(this)
+        } else {
+            @Suppress("DEPRECATION")
+            MediaRecorder()
+        }).apply {
             setVideoSource(MediaRecorder.VideoSource.SURFACE)
             setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
