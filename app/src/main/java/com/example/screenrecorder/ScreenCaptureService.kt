@@ -33,6 +33,7 @@ class ScreenCaptureService : Service() {
     companion object {
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
+        const val ACTION_RECORDING_STOPPED = "ACTION_RECORDING_STOPPED"
         const val EXTRA_RESULT_CODE = "EXTRA_RESULT_CODE"
         const val EXTRA_RESULT_DATA = "EXTRA_RESULT_DATA"
         
@@ -180,7 +181,7 @@ class ScreenCaptureService : Service() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
 
-        val stopIntent = Intent("ACTION_RECORDING_STOPPED")
+        val stopIntent = Intent(ACTION_RECORDING_STOPPED).setPackage(packageName)
         sendBroadcast(stopIntent)
     }
 

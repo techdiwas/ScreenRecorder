@@ -35,6 +35,14 @@ import androidx.core.content.ContextCompat
 class MainActivity : ComponentActivity() {
 
     private var isRecording by mutableStateOf(false)
+    private var isRecordingStoppedReceiverRegistered = false
+    private val recordingStoppedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == ScreenCaptureService.ACTION_RECORDING_STOPPED) {
+                isRecording = false
+            }
+        }
+    }
 
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -72,29 +80,16 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val filter = IntentFilter(ScreenCaptureService.ACTION_RECORDING_STOPPED)
+        ContextCompat.registerReceiver(
+            this,
+            recordingStoppedReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        isRecordingStoppedReceiverRegistered = true
         setContent {
             MaterialTheme {
-                // Listen for the service stopping via the notification action
-                DisposableEffect(Unit) {
-                    val receiver = object : BroadcastReceiver() {
-                        override fun onReceive(context: Context?, intent: Intent?) {
-                            if (intent?.action == "ACTION_RECORDING_STOPPED") {
-                                isRecording = false
-                            }
-                        }
-                    }
-                    val filter = IntentFilter("ACTION_RECORDING_STOPPED")
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-                    } else {
-                        registerReceiver(receiver, filter)
-                    }
-
-                    onDispose {
-                        unregisterReceiver(receiver)
-                    }
-                }
-
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -107,6 +102,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        if (isRecordingStoppedReceiverRegistered) {
+            unregisterReceiver(recordingStoppedReceiver)
+            isRecordingStoppedReceiverRegistered = false
+        }
+        super.onDestroy()
     }
 
     private fun checkPermissionsAndStart() {
