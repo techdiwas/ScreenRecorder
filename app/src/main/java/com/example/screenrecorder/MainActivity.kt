@@ -2,8 +2,10 @@ package com.example.screenrecorder
 
 import android.Manifest
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -31,6 +33,15 @@ import androidx.core.content.ContextCompat
 class MainActivity : ComponentActivity() {
 
     private var isRecording by mutableStateOf(false)
+
+    // Listen for the stop action triggered by the notification
+    private val recordingStoppedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == ScreenCaptureService.ACTION_RECORDING_STOPPED) {
+                isRecording = false
+            }
+        }
+    }
 
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -66,6 +77,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Register the broadcast receiver
+        val filter = IntentFilter(ScreenCaptureService.ACTION_RECORDING_STOPPED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(recordingStoppedReceiver, filter, RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(recordingStoppedReceiver, filter)
+        }
+
         setContent {
             MaterialTheme {
                 Surface(
@@ -80,6 +100,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        unregisterReceiver(recordingStoppedReceiver)
     }
 
     private fun checkPermissionsAndStart() {
