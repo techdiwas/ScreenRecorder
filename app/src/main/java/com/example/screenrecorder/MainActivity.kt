@@ -35,6 +35,7 @@ import androidx.core.content.ContextCompat
 class MainActivity : ComponentActivity() {
 
     private var isRecording by mutableStateOf(false)
+    private var isRecordingStoppedReceiverRegistered = false
     private val recordingStoppedReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == ScreenCaptureService.ACTION_RECORDING_STOPPED) {
@@ -86,6 +87,7 @@ class MainActivity : ComponentActivity() {
             filter,
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
+        isRecordingStoppedReceiverRegistered = true
         setContent {
             MaterialTheme {
                 Surface(
@@ -103,7 +105,10 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        unregisterReceiver(recordingStoppedReceiver)
+        if (isRecordingStoppedReceiverRegistered) {
+            unregisterReceiver(recordingStoppedReceiver)
+            isRecordingStoppedReceiverRegistered = false
+        }
         super.onDestroy()
     }
 
