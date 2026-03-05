@@ -28,45 +28,48 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import android.util.DisplayMetrics
+import android.view.WindowManager
 
 class MainActivity : ComponentActivity() {
 
     private var isRecording by mutableStateOf(false)
 
-    private val screenCaptureLauncher = registerForActivityResult(
+        private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            Toast.makeText(this, "Step 3: User approved screen capture", Toast.LENGTH_SHORT).show()
-            try {
-                val intent = Intent(this, ScreenCaptureService::class.java).apply {
-                    action = ScreenCaptureService.ACTION_START
-                    putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
-                    putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, result.data)
-                }
-                
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(intent)
-                } else {
-                    startService(intent)
-                }
-                isRecording = true
-                Toast.makeText(this, "Step 4: Service Started!", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(this, "Error starting service: ${e.message}", Toast.LENGTH_LONG).show()
+            
+            // FIX: Get the REAL screen metrics (including status bar/nav bar)
+            val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            val metrics = DisplayMetrics()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                display?.getRealMetrics(metrics)
+            } else {
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay.getRealMetrics(metrics)
             }
-        } else {
-            Toast.makeText(this, "Screen capture was cancelled", Toast.LENGTH_SHORT).show()
-        }
-    }
+            
+            // Video encoders often crash if dimensions aren't even numbers. 
+            // We round down to the nearest multiple of 2.
+            val width = metrics.widthPixels and  shl(1).inv() // rounds to even
+            val height = metrics.heightPixels and shl(1).inv() // rounds to even
 
-    private val permissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            startScreenCaptureIntent()
-        } else {
-            Toast.makeText(this, "Notification permission denied", Toast.LENGTH_SHORT).show()
+            val intent = Intent(this, ScreenCaptureService::class.java).apply {
+                action = ScreenCaptureService.ACTION_START
+                putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
+                putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, result.data)
+                putExtra(ScreenCaptureService.EXTRA_WIDTH, width)
+                putExtra(ScreenCaptureService.EXTRA_HEIGHT, height)
+                putExtra(ScreenCaptureService.EXTRA_DPI, metrics.densityDpi)
+            }
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+            isRecording = true
         }
     }
 
