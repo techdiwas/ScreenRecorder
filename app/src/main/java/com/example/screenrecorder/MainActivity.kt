@@ -2,8 +2,10 @@ package com.example.screenrecorder
 
 import android.Manifest
 import android.app.Activity
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -39,7 +41,6 @@ class MainActivity : ComponentActivity() {
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
             
-            // FIX: Get REAL full screen dimensions (including status/nav bars)
             val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
             var screenWidth = 0
             var screenHeight = 0
@@ -58,8 +59,7 @@ class MainActivity : ComponentActivity() {
                 screenHeight = metrics.heightPixels
             }
 
-            // FIX: Hardware Encoders often crash if width/height are odd numbers.
-            // Force them to be even numbers (multiples of 2).
+            // Hardware Encoders crash if width/height are odd numbers
             screenWidth -= (screenWidth % 2)
             screenHeight -= (screenHeight % 2)
             
@@ -93,6 +93,27 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
+                // Listen for the service stopping via the notification action
+                DisposableEffect(Unit) {
+                    val receiver = object : BroadcastReceiver() {
+                        override fun onReceive(context: Context?, intent: Intent?) {
+                            if (intent?.action == "ACTION_RECORDING_STOPPED") {
+                                isRecording = false
+                            }
+                        }
+                    }
+                    val filter = IntentFilter("ACTION_RECORDING_STOPPED")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                    } else {
+                        registerReceiver(receiver, filter)
+                    }
+
+                    onDispose {
+                        unregisterReceiver(receiver)
+                    }
+                }
+
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
