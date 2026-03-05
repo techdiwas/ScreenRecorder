@@ -2,14 +2,13 @@ package com.example.screenrecorder
 
 import android.Manifest
 import android.app.Activity
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -34,36 +33,30 @@ class MainActivity : ComponentActivity() {
 
     private var isRecording by mutableStateOf(false)
 
-    // Listen for the stop action triggered by the notification
-    private val recordingStoppedReceiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == ScreenCaptureService.ACTION_RECORDING_STOPPED) {
-                isRecording = false
-            }
-        }
-    }
-
     private val screenCaptureLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == Activity.RESULT_OK) {
-            val metrics = resources.displayMetrics
-            
-            val intent = Intent(this, ScreenCaptureService::class.java).apply {
-                action = ScreenCaptureService.ACTION_START
-                putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
-                putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, result.data)
-                putExtra(ScreenCaptureService.EXTRA_WIDTH, metrics.widthPixels)
-                putExtra(ScreenCaptureService.EXTRA_HEIGHT, metrics.heightPixels)
-                putExtra(ScreenCaptureService.EXTRA_DPI, metrics.densityDpi)
+            Toast.makeText(this, "Step 3: User approved screen capture", Toast.LENGTH_SHORT).show()
+            try {
+                val intent = Intent(this, ScreenCaptureService::class.java).apply {
+                    action = ScreenCaptureService.ACTION_START
+                    putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
+                    putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, result.data)
+                }
+                
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(intent)
+                } else {
+                    startService(intent)
+                }
+                isRecording = true
+                Toast.makeText(this, "Step 4: Service Started!", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(this, "Error starting service: ${e.message}", Toast.LENGTH_LONG).show()
             }
-            
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
-            }
-            isRecording = true
+        } else {
+            Toast.makeText(this, "Screen capture was cancelled", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -72,20 +65,13 @@ class MainActivity : ComponentActivity() {
     ) { isGranted ->
         if (isGranted) {
             startScreenCaptureIntent()
+        } else {
+            Toast.makeText(this, "Notification permission denied", Toast.LENGTH_SHORT).show()
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        // Register the broadcast receiver
-        val filter = IntentFilter(ScreenCaptureService.ACTION_RECORDING_STOPPED)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(recordingStoppedReceiver, filter, RECEIVER_EXPORTED)
-        } else {
-            registerReceiver(recordingStoppedReceiver, filter)
-        }
-
         setContent {
             MaterialTheme {
                 Surface(
@@ -94,7 +80,10 @@ class MainActivity : ComponentActivity() {
                 ) {
                     ScreenRecorderUI(
                         isRecording = isRecording,
-                        onStartClick = { checkPermissionsAndStart() },
+                        onStartClick = { 
+                            Toast.makeText(this, "Step 1: Button Clicked", Toast.LENGTH_SHORT).show()
+                            checkPermissionsAndStart() 
+                        },
                         onStopClick = { stopScreenCapture() }
                     )
                 }
@@ -102,16 +91,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        unregisterReceiver(recordingStoppedReceiver)
-    }
-
     private fun checkPermissionsAndStart() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            when (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)) {
-                PackageManager.PERMISSION_GRANTED -> startScreenCaptureIntent()
-                else -> permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+                startScreenCaptureIntent()
+            } else {
+                permissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         } else {
             startScreenCaptureIntent()
@@ -119,8 +104,14 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startScreenCaptureIntent() {
-        val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        screenCaptureLauncher.launch(projectionManager.createScreenCaptureIntent())
+        try {
+            Toast.makeText(this, "Step 2: Requesting Screen Capture...", Toast.LENGTH_SHORT).show()
+            val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            val intent = projectionManager.createScreenCaptureIntent()
+            screenCaptureLauncher.launch(intent)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error launching capture prompt: ${e.message}", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun stopScreenCapture() {
@@ -129,9 +120,11 @@ class MainActivity : ComponentActivity() {
         }
         startService(intent)
         isRecording = false
+        Toast.makeText(this, "Recording Stopped", Toast.LENGTH_SHORT).show()
     }
 }
 
+// ... [Keep the exact same ScreenRecorderUI Composable code here] ...
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScreenRecorderUI(
@@ -172,7 +165,6 @@ fun ScreenRecorderUI(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(24.dp)
                 ) {
-                    
                     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
                     val scale by infiniteTransition.animateFloat(
                         initialValue = 1f,
