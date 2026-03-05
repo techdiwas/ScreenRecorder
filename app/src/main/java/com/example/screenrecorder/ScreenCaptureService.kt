@@ -2,6 +2,7 @@ package com.example.screenrecorder
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.ContentValues
 import android.content.Context
@@ -50,11 +51,25 @@ class ScreenCaptureService : Service() {
 
     private fun startRecording(intent: Intent) {
         createNotificationChannel()
+
+        // Create a PendingIntent for the Stop action in the notification
+        val stopIntent = Intent(this, ScreenCaptureService::class.java).apply {
+            action = ACTION_STOP
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            0,
+            stopIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
         val notification = NotificationCompat.Builder(this, "ScreenRecorderChannel")
             .setContentTitle("Screen Recorder")
-            .setContentText("Recording screen...")
+            .setContentText("Recording in progress...")
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setOngoing(true)
+            // ADDED: The stop button on the notification
+            .addAction(android.R.drawable.ic_media_pause, "Stop Recording", stopPendingIntent)
             .build()
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -76,7 +91,6 @@ class ScreenCaptureService : Service() {
             intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
         }
 
-        // Ensure width and height are even numbers (multiples of 2) to prevent MediaRecorder crash
         val rawWidth = intent.getIntExtra(EXTRA_WIDTH, 720)
         val rawHeight = intent.getIntExtra(EXTRA_HEIGHT, 1280)
         val width = if (rawWidth % 2 != 0) rawWidth - 1 else rawWidth
@@ -104,7 +118,7 @@ class ScreenCaptureService : Service() {
             mediaRecorder?.start()
         } catch (e: Exception) {
             Log.e(TAG, "Error starting screen recording: ${e.message}", e)
-            stopRecording() // Clean up safely instead of crashing
+            stopRecording()
         }
     }
 
@@ -154,6 +168,9 @@ class ScreenCaptureService : Service() {
             
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
+            
+            // Optional: Send a broadcast to MainActivity to update UI if it's open
+            sendBroadcast(Intent("com.example.screenrecorder.RECORDING_STOPPED"))
         }
     }
 
